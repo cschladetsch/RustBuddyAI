@@ -48,20 +48,19 @@ Press configured hotkey (default: `Ctrl+Alt+B`), speak your command, wait for co
 
 ```mermaid
 flowchart TD
-    A[Hotkey Press] --> B[Audio Capture]
-    B --> C[Record 3 seconds]
-    C --> D[Local Transcription<br/>Vosk]
-    D --> E[Load Config]
-    E --> F[Send to DeepSeek<br/>Local API]
-    F --> G[Parse Intent]
-    G --> H{Action Type?}
-    H -->|File| I[Open File]
-    H -->|App| J[Launch App]
-    H -->|System| K[Execute Command]
-    I --> L[Audio Feedback]
-    J --> L
-    K --> L
-    L --> M[Return to Listening]
+    A[Hotkey Press] --> B[Invoke Windows Speech Recognition]
+    B --> C[Native Transcription]
+    C --> D[Load Config]
+    D --> E[Send to DeepSeek<br/>Local API]
+    E --> F[Parse Intent]
+    F --> G{Action Type?}
+    G -->|File| H[Open File]
+    G -->|App| I[Launch App]
+    G -->|System| J[Execute Command]
+    H --> K[Audio Feedback]
+    I --> K
+    J --> K
+    K --> L[Return to Listening]
 ```
 
 ## System Flow
@@ -70,17 +69,14 @@ flowchart TD
 sequenceDiagram
     participant User
     participant Buddy
-    participant Mic as Blue Yeti
-    participant Vosk as Vosk Engine
+    participant WSR as Windows Speech
     participant DS as DeepSeek Local
     participant OS as Windows
 
     User->>Buddy: Press Ctrl+Alt+B
-    Buddy->>Mic: Start Recording
-    User->>Mic: "Open my resume"
-    Mic->>Buddy: Audio Buffer (3s)
-    Buddy->>Vosk: Transcribe Audio
-    Vosk->>Buddy: "open my resume"
+    Buddy->>WSR: Start Listening
+    User->>WSR: "Open my resume"
+    WSR->>Buddy: "open my resume"
     Buddy->>DS: Intent Request + Config
     DS->>Buddy: {"action": "open", "target": "resume"}
     Buddy->>OS: Open resume.docx
@@ -94,11 +90,8 @@ sequenceDiagram
 
 ```toml
 [audio]
-# Device selection (optional, uses default if not specified)
-# Run 'buddy --list-devices' to see available microphones
-device_name = "Blue Yeti"
+# How long Buddy waits for you to start speaking (seconds)
 capture_duration_secs = 3
-sample_rate = 16000
 
 [hotkey]
 # Trigger combination to start listening
@@ -118,8 +111,11 @@ model = "deepseek-r1:latest"
 timeout_secs = 5
 
 [transcription]
-# Vosk model path
-model_path = "models/vosk-model-small-en-us-0.15"
+# Optional Windows speech settings
+language_tag = "en-US"
+topic_hint = "voice commands"
+initial_silence_timeout_ms = 3000
+end_silence_timeout_ms = 1200
 
 # File mappings - "open X" commands
 [files]
@@ -149,21 +145,16 @@ lock = true
 ## Dependencies
 
 ### Core
-- **cpal** - Cross-platform audio capture
-- **vosk** - Local speech-to-text (offline)
+- **windows-rs** - Windows Speech Recognition + OS APIs
 - **reqwest** - HTTP client for DeepSeek API
 - **serde** - Config parsing and JSON handling
 - **tokio** - Async runtime
 - **toml** - Config file parsing
 
 ### System Integration
-- **windows-rs** - Native Windows APIs for system commands
 - **global-hotkey** - Hotkey registration
 - **tts** - Text-to-speech (Windows SAPI)
-
-### Audio
 - **rodio** - Audio playback for feedback sounds
-- **hound** - WAV file handling
 
 ## Setup Instructions
 
@@ -179,13 +170,12 @@ sudo apt update
 sudo apt install -y mingw-w64
 ```
 
-### 2. Download Vosk Model
+### 2. Enable Windows Speech Recognition
 
-```bash
-# Download small English model (~40MB)
-wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-unzip vosk-model-small-en-us-0.15.zip -d models/
-```
+- On Windows, open **Settings → Time & Language → Speech**
+- Make sure "Speech language" is installed (e.g., English (United States))
+- Grant microphone access to desktop apps (Settings → Privacy & security → Microphone)
+- Nothing to download — Buddy uses the built-in recognizer
 
 ### 3. Setup DeepSeek Local
 
@@ -231,22 +221,6 @@ cp target/x86_64-pc-windows-gnu/release/buddy.exe /mnt/c/Users/YourName/buddy.ex
 3. **Speak Command** - "Open my resume" or "Mute volume"
 4. **Wait for Confirmation** - Audio feedback indicates success/failure
 
-### Testing Commands
-
-```bash
-# List available audio devices
-buddy.exe --list-devices
-
-# Test transcription without executing
-buddy.exe --test-transcribe
-
-# Validate config file
-buddy.exe --check-config
-
-# Verbose mode for debugging
-buddy.exe --verbose
-```
-
 ## DeepSeek Prompt Strategy
 
 Buddy sends this context to DeepSeek for intent parsing:
@@ -281,14 +255,12 @@ User: "what's the weather" → {"action": "unknown", "target": null, "confidence
 buddy/
 ├── src/
 │   ├── main.rs              # Entry point, hotkey handling
-│   ├── audio.rs             # Microphone capture via cpal
-│   ├── transcription.rs     # Vosk integration
+│   ├── transcription.rs     # Windows Speech Recognition bridge
 │   ├── intent.rs            # DeepSeek API client
 │   ├── executor.rs          # Command execution
 │   ├── feedback.rs          # Audio/TTS responses
 │   ├── config.rs            # Config loading and validation
 │   └── windows_api.rs       # Windows-specific system commands
-├── models/                  # Vosk speech models
 ├── assets/                  # Audio feedback files
 ├── config.toml             # User configuration
 ├── config.example.toml     # Template
@@ -315,7 +287,7 @@ cargo watch -x 'build --target x86_64-pc-windows-gnu'
 ### v0.1 (MVP - Today's Goal)
 - [x] Hotkey activation
 - [x] Audio capture from Blue Yeti
-- [x] Local transcription (Vosk)
+- [x] Native Windows speech recognition
 - [x] DeepSeek intent parsing
 - [x] File opening
 - [x] App launching
@@ -345,14 +317,9 @@ cargo watch -x 'build --target x86_64-pc-windows-gnu'
 ## Troubleshooting
 
 ### Audio Not Captured
-```bash
-# List devices to find Blue Yeti
-buddy.exe --list-devices
-
-# Update config.toml with correct device name
-[audio]
-device_name = "Blue Yeti Microphone"
-```
+- Set the correct default recording device in Windows Sound settings
+- Verify microphone privacy settings allow desktop apps
+- Check hardware mute buttons (many USB mics have them)
 
 ### DeepSeek Not Responding
 ```bash
@@ -364,13 +331,9 @@ ollama list | grep deepseek
 ```
 
 ### Transcription Fails
-```bash
-# Verify Vosk model exists
-ls models/vosk-model-small-en-us-0.15/
-
-# Try larger model for better accuracy
-wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
-```
+- Make sure Windows Speech Recognition works in Settings
+- Run the built-in speech training for better accuracy
+- Check microphone privacy settings and disable "Allow desktop apps to access your microphone" off/on
 
 ### Commands Not Executing
 ```bash
@@ -394,7 +357,7 @@ linker = "x86_64-w64-mingw32-gcc"
 ## Performance Targets
 
 - **Hotkey to Listening**: < 100ms
-- **Transcription**: < 2s (with small Vosk model)
+- **Transcription**: < 2s (Windows Speech Recognition)
 - **DeepSeek Intent**: < 1s
 - **Command Execution**: < 500ms
 - **Total Latency**: < 4s from speech end to action
@@ -417,7 +380,7 @@ MIT - Do whatever you want with it.
 Built by Christian Schladetsch as a practical tool for voice-controlling Windows without cloud dependencies.
 
 **Technologies:**
-- [Vosk](https://alphacephei.com/vosk/) - Offline speech recognition
+- [Windows Speech Recognition](https://learn.microsoft.com/windows/apps/design/input/speech-recognition) - Built-in transcription
 - [DeepSeek](https://www.deepseek.com/) - Local LLM for intent parsing
 - [Rust](https://www.rust-lang.org/) - Because memory safety matters for always-on services
 

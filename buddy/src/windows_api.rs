@@ -3,11 +3,13 @@ use std::path::Path;
 #[cfg(target_os = "windows")]
 use std::process::Command;
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #[derive(Debug)]
 pub enum WindowsActionError {
+    #[cfg_attr(not(windows), allow(dead_code))]
     Io(std::io::Error),
+    #[cfg(target_os = "windows")]
     Windows(windows::core::Error),
+    #[cfg_attr(windows, allow(dead_code))]
     Unsupported(&'static str),
 }
 
@@ -15,6 +17,7 @@ impl std::fmt::Display for WindowsActionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(err) => write!(f, "io error: {}", err),
+            #[cfg(target_os = "windows")]
             Self::Windows(err) => write!(f, "win32 error: {}", err),
             Self::Unsupported(msg) => write!(f, "unsupported: {}", msg),
         }
@@ -25,18 +28,19 @@ impl std::error::Error for WindowsActionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
+            #[cfg(target_os = "windows")]
             Self::Windows(err) => Some(err),
             Self::Unsupported(_) => None,
         }
     }
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub enum SystemAction {
     VolumeMute,
     VolumeUp,
     VolumeDown,
+    #[cfg_attr(not(windows), allow(dead_code))]
     VolumeSet(u8),
     Sleep,
     Shutdown,
@@ -112,7 +116,7 @@ fn run_detached(cmd: &mut Command) -> Result<(), WindowsActionError> {
 #[cfg(target_os = "windows")]
 fn send_volume_key(vk_code: u8) -> Result<(), WindowsActionError> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, keybd_event,
+        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
     };
 
     unsafe {
@@ -126,9 +130,9 @@ fn send_volume_key(vk_code: u8) -> Result<(), WindowsActionError> {
 fn set_master_volume(level: u8) -> Result<(), WindowsActionError> {
     use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
     use windows::Win32::Media::Audio::{
-        IMMDeviceEnumerator, MMDeviceEnumerator, eConsole, eRender,
+        eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
     };
-    use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 
     unsafe {
         let _guard = ComGuard::new()?;
@@ -160,6 +164,7 @@ impl ComGuard {
                 None,
                 windows::Win32::System::Com::COINIT_MULTITHREADED,
             )
+            .ok()
             .map_err(WindowsActionError::Windows)?;
         }
         Ok(Self)
@@ -191,15 +196,9 @@ fn suspend_system() -> Result<(), WindowsActionError> {
 
 #[cfg(target_os = "windows")]
 fn lock_workstation() -> Result<(), WindowsActionError> {
-    use windows::Win32::UI::WindowsAndMessaging::LockWorkStation;
+    use windows::Win32::System::Shutdown::LockWorkStation;
 
-    unsafe {
-        if LockWorkStation().as_bool() {
-            Ok(())
-        } else {
-            Err(last_os_error())
-        }
-    }
+    unsafe { LockWorkStation().map_err(WindowsActionError::Windows) }
 }
 
 #[cfg(target_os = "windows")]

@@ -2,14 +2,14 @@ use crate::config::{FeedbackConfig, FeedbackMode};
 use rodio::{Decoder, OutputStream, Sink};
 use std::{fs::File, io::BufReader, path::Path};
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use tts::Tts;
 
 pub struct FeedbackPlayer {
     mode: FeedbackMode,
     success_sound: Option<String>,
     error_sound: Option<String>,
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     tts: Option<Tts>,
 }
 
@@ -25,7 +25,7 @@ impl FeedbackPlayer {
                 .error_sound
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string()),
-            #[cfg(target_os = "windows")]
+            #[cfg(windows)]
             tts: init_tts(&cfg.tts_voice),
         }
     }
@@ -66,25 +66,29 @@ impl FeedbackPlayer {
         }
     }
 
-    #[cfg(target_os = "windows")]
     fn speak(&mut self, text: &str) {
-        if let Some(tts) = self.tts.as_mut() {
-            let _ = tts.speak(text, false);
+        #[cfg(windows)]
+        {
+            if let Some(tts) = self.tts.as_mut() {
+                let _ = tts.speak(text, false);
+            }
+        }
+
+        #[cfg(not(windows))]
+        {
+            let _ = text;
         }
     }
-
-    #[cfg(not(target_os = "windows"))]
-    fn speak(&mut self, _text: &str) {}
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn init_tts(preferred_voice: &str) -> Option<Tts> {
     let mut tts = Tts::default().ok()?;
     if !preferred_voice.eq_ignore_ascii_case("default") {
         if let Ok(voices) = tts.voices() {
             if let Some(voice) = voices
                 .into_iter()
-                .find(|voice| voice.name.eq_ignore_ascii_case(preferred_voice))
+                .find(|voice| voice.name().eq_ignore_ascii_case(preferred_voice))
             {
                 let _ = tts.set_voice(&voice);
             }

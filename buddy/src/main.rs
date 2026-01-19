@@ -1,4 +1,3 @@
-mod audio;
 mod config;
 mod executor;
 mod feedback;
@@ -7,13 +6,11 @@ mod intent;
 mod transcription;
 mod windows_api;
 
-use audio::AudioCapturer;
 use config::Config;
 use executor::CommandExecutor;
 use feedback::FeedbackPlayer;
 use hotkey::{HotkeyError, HotkeyListener};
 use intent::{IntentAction, IntentClient, IntentError, IntentResponse};
-use std::{sync::Arc, time::Duration};
 use transcription::Transcriber;
 
 #[tokio::main]
@@ -38,11 +35,7 @@ async fn run() -> Result<(), BuddyError> {
         }
     };
 
-    let capturer = Arc::new(AudioCapturer::new(&config.audio)?);
-    let transcriber = Arc::new(Transcriber::new(
-        &config.transcription,
-        config.audio.sample_rate,
-    )?);
+    let transcriber = Transcriber::new(&config.transcription, &config.audio)?;
     let intent_client = IntentClient::new(&config);
     let executor = CommandExecutor::new(&config);
     let mut feedback = FeedbackPlayer::new(&config.feedback);
@@ -55,14 +48,8 @@ async fn run() -> Result<(), BuddyError> {
 
     loop {
         hotkey.wait().await?;
-        println!("Recording audio...");
-        let capturer_clone = Arc::clone(&capturer);
-        let capture_duration = Duration::from_secs(config.audio.capture_duration_secs);
-        let audio_buffer =
-            tokio::task::spawn_blocking(move || capturer_clone.capture(capture_duration)).await??;
-
-        println!("Transcribing...");
-        let transcript = transcriber.transcribe(&audio_buffer)?;
+        println!("Listening...");
+        let transcript = transcriber.transcribe()?;
         if transcript.trim().is_empty() {
             eprintln!("No speech detected");
             feedback.error("I didn't hear anything");
@@ -101,21 +88,17 @@ fn handle_intent(
 
 #[derive(Debug)]
 enum BuddyError {
-    Audio(audio::AudioError),
     Transcription(transcription::TranscriptionError),
     Intent(IntentError),
     Hotkey(HotkeyError),
-    Join(tokio::task::JoinError),
 }
 
 impl std::fmt::Display for BuddyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Audio(err) => write!(f, "audio error: {}", err),
             Self::Transcription(err) => write!(f, "transcription error: {}", err),
             Self::Intent(err) => write!(f, "intent error: {}", err),
             Self::Hotkey(err) => write!(f, "hotkey error: {}", err),
-            Self::Join(err) => write!(f, "task failed: {}", err),
         }
     }
 }
@@ -123,18 +106,10 @@ impl std::fmt::Display for BuddyError {
 impl std::error::Error for BuddyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Audio(err) => Some(err),
             Self::Transcription(err) => Some(err),
             Self::Intent(err) => Some(err),
             Self::Hotkey(err) => Some(err),
-            Self::Join(err) => Some(err),
         }
-    }
-}
-
-impl From<audio::AudioError> for BuddyError {
-    fn from(err: audio::AudioError) -> Self {
-        Self::Audio(err)
     }
 }
 
@@ -153,11 +128,5 @@ impl From<IntentError> for BuddyError {
 impl From<HotkeyError> for BuddyError {
     fn from(err: HotkeyError) -> Self {
         Self::Hotkey(err)
-    }
-}
-
-impl From<tokio::task::JoinError> for BuddyError {
-    fn from(err: tokio::task::JoinError) -> Self {
-        Self::Join(err)
     }
 }

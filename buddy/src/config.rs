@@ -28,9 +28,11 @@ pub struct Config {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AudioConfig {
+    #[allow(dead_code)]
     pub device_name: Option<String>,
     #[serde(default = "AudioConfig::default_capture_duration_secs")]
     pub capture_duration_secs: u64,
+    #[allow(dead_code)]
     #[serde(default = "AudioConfig::default_sample_rate")]
     pub sample_rate: u32,
 }
@@ -47,8 +49,8 @@ pub struct FeedbackConfig {
     pub mode: FeedbackMode,
     pub success_sound: Option<PathBuf>,
     pub error_sound: Option<PathBuf>,
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     #[serde(default = "FeedbackConfig::default_voice")]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub tts_voice: String,
 }
 
@@ -78,8 +80,14 @@ pub struct DeepSeekConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TranscriptionConfig {
-    #[serde(default = "TranscriptionConfig::default_model_path")]
-    pub model_path: PathBuf,
+    #[serde(default)]
+    pub language_tag: Option<String>,
+    #[serde(default = "TranscriptionConfig::default_topic_hint")]
+    pub topic_hint: String,
+    #[serde(default)]
+    pub initial_silence_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub end_silence_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -218,14 +226,17 @@ impl DeepSeekConfig {
 impl Default for TranscriptionConfig {
     fn default() -> Self {
         Self {
-            model_path: Self::default_model_path(),
+            language_tag: None,
+            topic_hint: Self::default_topic_hint(),
+            initial_silence_timeout_ms: None,
+            end_silence_timeout_ms: None,
         }
     }
 }
 
 impl TranscriptionConfig {
-    fn default_model_path() -> PathBuf {
-        PathBuf::from("models/vosk-model-small-en-us-0.15")
+    fn default_topic_hint() -> String {
+        "dictation".to_string()
     }
 }
 

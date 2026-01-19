@@ -1,9 +1,8 @@
 [audio]
-# How long Buddy waits for speech before timing out (seconds)
 capture_duration_secs = 3
 
 [hotkey]
-key = "ctrl+alt+b"
+key = "f9"
 
 [feedback]
 mode = "tts"
@@ -17,18 +16,15 @@ model = "deepseek-r1:latest"
 timeout_secs = 5
 
 [transcription]
-# Optional BCP-47 tag. Leave unset to follow the system language.
 language_tag = "en-US"
-# Hint that nudges Windows toward dictation or command phrasing.
 topic_hint = "voice commands"
-# Override how long to wait before speech starts and after it ends (milliseconds).
 initial_silence_timeout_ms = 3000
 end_silence_timeout_ms = 1200
 
 [files]
-details = "C:/Users/YourName/Documents/details.md"
-resume = "C:/Users/YourName/Documents/resume.docx"
-contacts = "C:/Users/YourName/Documents/contacts.txt"
+details = "C:/Users/chris/Documents/details.md"
+resume = "C:/Users/chris/Documents/resume.docx"
+contacts = "C:/Users/chris/Documents/contacts.txt"
 
 [applications]
 chrome = "chrome"
