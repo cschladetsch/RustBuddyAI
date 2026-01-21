@@ -68,7 +68,7 @@ fn build_prompt(transcription: &str, config: &Config) -> String {
     let apps = config.app_keys().join(", ");
     let systems = config.system_actions().join(", ");
     format!(
-        "You interpret voice commands.\nUser said: \"{transcription}\"\nFILES: [{files}]\nAPPS: [{apps}]\nSYSTEM: [{systems}]\nReturn JSON only with keys action, target, confidence.",
+        "You interpret voice commands.\nUser said: \"{transcription}\"\nFILES: [{files}]\nAPPS: [{apps}]\nSYSTEM: [{systems}]\nReturn JSON only (no markdown, no code fences) with keys action, target, confidence.",
         transcription = transcription,
         files = files,
         apps = apps,
@@ -77,10 +77,19 @@ fn build_prompt(transcription: &str, config: &Config) -> String {
 }
 
 fn parse_intent(raw: &str) -> Result<IntentResponse, IntentError> {
-    serde_json::from_str(raw).map_err(|err| IntentError::InvalidFormat {
+    let cleaned = raw.trim();
+    let cleaned = cleaned
+        .strip_prefix("```json")
+        .or_else(|| cleaned.strip_prefix("```"))
+        .unwrap_or(cleaned)
+        .strip_suffix("```")
+        .unwrap_or(cleaned)
+        .trim();
+    let parsed: RawIntent = serde_json::from_str(cleaned).map_err(|err| IntentError::InvalidFormat {
         raw: raw.to_string(),
         err,
-    })
+    })?;
+    Ok(parsed.into())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,8 +115,7 @@ struct ChatResponseMessage {
     content: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy)]
 pub enum IntentAction {
     Open,
     Launch,
@@ -115,7 +123,7 @@ pub enum IntentAction {
     Unknown,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IntentResponse {
     pub action: IntentAction,
     pub target: Option<String>,
@@ -128,6 +136,46 @@ impl IntentResponse {
             action: IntentAction::Unknown,
             target: None,
             confidence: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawIntent {
+    action: Option<String>,
+    target: Option<String>,
+    confidence: Option<serde_json::Value>,
+}
+
+impl From<RawIntent> for IntentResponse {
+    fn from(raw: RawIntent) -> Self {
+        let action = match raw
+            .action
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "open" => IntentAction::Open,
+            "launch" => IntentAction::Launch,
+            "system" => IntentAction::System,
+            _ => IntentAction::Unknown,
+        };
+        let confidence = match raw.confidence {
+            Some(serde_json::Value::Number(num)) => num.as_f64().unwrap_or(0.0) as f32,
+            Some(serde_json::Value::String(s)) => match s.to_lowercase().as_str() {
+                "high" => 0.9,
+                "medium" => 0.6,
+                "low" => 0.3,
+                _ => 0.0,
+            },
+            Some(serde_json::Value::Bool(val)) => if val { 1.0 } else { 0.0 },
+            _ => 0.0,
+        };
+        Self {
+            action,
+            target: raw.target,
+            confidence,
         }
     }
 }

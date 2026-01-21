@@ -6,10 +6,14 @@ pub struct Transcriber {
     ctx: WhisperContext,
     language: Option<String>,
     threads: i32,
+    initial_prompt: Option<String>,
 }
 
 impl Transcriber {
-    pub fn new(cfg: &TranscriptionConfig) -> Result<Self, TranscriptionError> {
+    pub fn new(
+        cfg: &TranscriptionConfig,
+        initial_prompt: Option<String>,
+    ) -> Result<Self, TranscriptionError> {
         let model_path = resolve_path(&cfg.model_path);
         let ctx = WhisperContext::new_with_params(&model_path, WhisperContextParameters::default())
             .map_err(|err| TranscriptionError::Model(err.to_string()))?;
@@ -21,6 +25,7 @@ impl Transcriber {
             ctx,
             language: cfg.language.clone(),
             threads,
+            initial_prompt,
         })
     }
 
@@ -32,10 +37,23 @@ impl Transcriber {
             .ctx
             .create_state()
             .map_err(|err| TranscriptionError::State(err.to_string()))?;
-        let mut params = FullParams::new(SamplingStrategy::default());
+        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: 0.0,
+        });
         params.set_n_threads(self.threads);
         if let Some(lang) = &self.language {
             params.set_language(Some(lang));
+        }
+        params.set_temperature(0.0);
+        params.set_temperature_inc(0.0);
+        params.set_no_context(true);
+        params.set_single_segment(true);
+        params.set_max_tokens(16);
+        params.set_suppress_blank(true);
+        params.set_suppress_non_speech_tokens(true);
+        if let Some(prompt) = &self.initial_prompt {
+            params.set_initial_prompt(prompt);
         }
 
         let audio_f32: Vec<f32> = audio

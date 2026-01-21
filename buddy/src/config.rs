@@ -24,6 +24,8 @@ pub struct Config {
     pub applications: HashMap<String, String>,
     #[serde(default)]
     pub system: SystemConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,6 +110,14 @@ pub struct SystemConfig {
     pub lock: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default)]
+    pub debug: bool,
+    #[serde(default)]
+    pub whisper_log: bool,
+}
+
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let data = fs::read_to_string(path).map_err(ConfigError::Io)?;
@@ -142,6 +152,7 @@ impl Default for Config {
             files: HashMap::new(),
             applications: HashMap::new(),
             system: SystemConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -248,6 +259,15 @@ impl Default for SystemConfig {
             shutdown: true,
             restart: true,
             lock: true,
+        }
+    }
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            debug: false,
+            whisper_log: false,
         }
     }
 }

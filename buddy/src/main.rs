@@ -29,10 +29,20 @@ async fn run() -> Result<(), BuddyError> {
         audio::print_input_devices()?;
         return Ok(());
     }
-    let config_path = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "config.toml".into());
+    let mut config_path = None;
+    let mut debug_override: Option<bool> = None;
+    let mut whisper_log_override: Option<bool> = None;
+    for arg in &args {
+        match arg.as_str() {
+            "--debug" => debug_override = Some(true),
+            "--no-debug" => debug_override = Some(false),
+            "--whisper-log" => whisper_log_override = Some(true),
+            "--no-whisper-log" => whisper_log_override = Some(false),
+            _ if config_path.is_none() => config_path = Some(arg.clone()),
+            _ => {}
+        }
+    }
+    let config_path = config_path.unwrap_or_else(|| "config.toml".into());
     let config = match Config::load(&config_path) {
         Ok(cfg) => cfg,
         Err(err) => {
@@ -43,9 +53,26 @@ async fn run() -> Result<(), BuddyError> {
             Config::default()
         }
     };
+    let debug = debug_override.unwrap_or(config.logging.debug);
+    let whisper_log = whisper_log_override.unwrap_or(config.logging.whisper_log);
+    if !whisper_log {
+        unsafe {
+            whisper_rs::set_log_callback(Some(silent_whisper_log), std::ptr::null_mut());
+        }
+    }
+    if debug {
+        println!("Loaded config from '{}'", config_path);
+        if let Some(path) = config.files.get("resume") {
+            println!("Config mapping: resume -> {}", path.display());
+            if !path.exists() {
+                eprintln!("Warning: resume path does not exist");
+            }
+        }
+    }
 
-    let capturer = Arc::new(AudioCapturer::new(&config.audio)?);
-    let transcriber = Arc::new(Transcriber::new(&config.transcription)?);
+    let capturer = Arc::new(AudioCapturer::new(&config.audio, debug)?);
+    let initial_prompt = build_transcription_prompt(&config);
+    let transcriber = Arc::new(Transcriber::new(&config.transcription, initial_prompt)?);
     let intent_client = IntentClient::new(&config);
     let executor = CommandExecutor::new(&config);
     let mut feedback = FeedbackPlayer::new(&config.feedback);
@@ -73,9 +100,71 @@ async fn run() -> Result<(), BuddyError> {
         }
         println!("Heard: {}", transcript);
 
-        let intent = intent_client.infer_intent(&transcript, &config).await?;
+        let intent = match intent_client.infer_intent(&transcript, &config).await {
+            Ok(intent) => intent,
+            Err(err) => {
+                eprintln!("Intent error: {}", err);
+                feedback.error("Intent failed");
+                continue;
+            }
+        };
         handle_intent(&executor, intent, &mut feedback);
     }
+}
+
+fn build_transcription_prompt(config: &Config) -> Option<String> {
+    let mut phrases = Vec::new();
+    if !config.files.is_empty() {
+        let mut keys: Vec<_> = config.files.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            phrases.push(format!("Open {}.", key));
+        }
+    }
+    if !config.applications.is_empty() {
+        let mut keys: Vec<_> = config.applications.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            phrases.push(format!("Launch {}.", key));
+        }
+    }
+    let system = &config.system;
+    if system.volume_mute {
+        phrases.push("Mute volume.".to_string());
+    }
+    if system.volume_up {
+        phrases.push("Volume up.".to_string());
+    }
+    if system.volume_down {
+        phrases.push("Volume down.".to_string());
+    }
+    if system.volume_set {
+        phrases.push("Set volume to 50.".to_string());
+    }
+    if system.sleep {
+        phrases.push("Go to sleep.".to_string());
+    }
+    if system.restart {
+        phrases.push("Restart computer.".to_string());
+    }
+    if system.shutdown {
+        phrases.push("Shut down computer.".to_string());
+    }
+    if system.lock {
+        phrases.push("Lock computer.".to_string());
+    }
+    if phrases.is_empty() {
+        None
+    } else {
+        Some(phrases.join(" "))
+    }
+}
+
+unsafe extern "C" fn silent_whisper_log(
+    _level: std::os::raw::c_int,
+    _text: *const std::os::raw::c_char,
+    _user_data: *mut std::ffi::c_void,
+) {
 }
 
 fn handle_intent(

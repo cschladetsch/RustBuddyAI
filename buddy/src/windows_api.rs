@@ -50,13 +50,9 @@ pub enum SystemAction {
 
 #[cfg(target_os = "windows")]
 pub fn open_path(path: &Path) -> Result<(), WindowsActionError> {
+    let path_arg = path.to_string_lossy();
     let mut cmd = Command::new("cmd");
-    cmd.args([
-        "/C",
-        "start",
-        "",
-        &format!("\"{}\"", path.to_string_lossy()),
-    ]);
+    cmd.args(["/C", "start", "", path_arg.as_ref()]);
     run_detached(&mut cmd)
 }
 
@@ -70,7 +66,7 @@ pub fn open_path(_path: &Path) -> Result<(), WindowsActionError> {
 #[cfg(target_os = "windows")]
 pub fn launch(app: &str) -> Result<(), WindowsActionError> {
     let mut cmd = Command::new("cmd");
-    cmd.args(["/C", "start", "", &format!("\"{}\"", app)]);
+    cmd.args(["/C", "start", "", app]);
     run_detached(&mut cmd)
 }
 

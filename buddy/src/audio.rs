@@ -15,6 +15,7 @@ pub struct AudioCapturer {
     sample_format: SampleFormat,
     channels: usize,
     sample_rate: u32,
+    debug: bool,
 }
 
 pub fn print_input_devices() -> Result<(), AudioError> {
@@ -62,7 +63,7 @@ pub fn print_input_devices() -> Result<(), AudioError> {
 }
 
 impl AudioCapturer {
-    pub fn new(cfg: &AudioConfig) -> Result<Self, AudioError> {
+    pub fn new(cfg: &AudioConfig, debug: bool) -> Result<Self, AudioError> {
         let host = cpal::default_host();
         let device = if let Some(name) = &cfg.device_name {
             let mut devices = host.input_devices().map_err(AudioError::Devices)?;
@@ -88,6 +89,18 @@ impl AudioCapturer {
         let mut stream_config: StreamConfig = supported.config().clone();
         stream_config.sample_rate = SampleRate(cfg.sample_rate);
         let channels = stream_config.channels as usize;
+        if debug {
+            let device_name = device
+                .name()
+                .unwrap_or_else(|_| "Unknown input device".to_string());
+            println!(
+                "Using input device: {} ({} ch @ {} Hz, {:?})",
+                device_name,
+                channels,
+                stream_config.sample_rate.0,
+                supported.sample_format()
+            );
+        }
 
         Ok(Self {
             device,
@@ -95,6 +108,7 @@ impl AudioCapturer {
             sample_format,
             channels,
             sample_rate: cfg.sample_rate,
+            debug,
         })
     }
 
@@ -112,7 +126,7 @@ impl AudioCapturer {
             _ => Err(AudioError::UnsupportedFormat(self.sample_format)),
         }?;
 
-        if !data.is_empty() {
+        if self.debug && !data.is_empty() {
             let target_peak = (i16::MAX as f32 * 0.8) as f32;
             let (peak, _rms) = peak_rms(&data);
             let mut scaled = false;
@@ -208,6 +222,17 @@ fn peak_rms(samples: &[i16]) -> (i16, f64) {
 fn resample_linear(samples: &[i16], src_rate: u32, dst_rate: u32) -> Vec<i16> {
     if src_rate == dst_rate || samples.len() < 2 {
         return samples.to_vec();
+    }
+    if src_rate % dst_rate == 0 {
+        let factor = (src_rate / dst_rate) as usize;
+        if factor > 1 {
+            let mut out = Vec::with_capacity(samples.len() / factor);
+            for chunk in samples.chunks_exact(factor) {
+                let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
+                out.push((sum / factor as i32) as i16);
+            }
+            return out;
+        }
     }
     let ratio = dst_rate as f64 / src_rate as f64;
     let out_len = ((samples.len() as f64) * ratio).max(1.0) as usize;

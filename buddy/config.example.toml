@@ -46,3 +46,7 @@ sleep = true
 shutdown = true
 restart = true
 lock = true
+
+[logging]
+debug = false
+whisper_log = false
