@@ -7,6 +7,7 @@ pub struct Transcriber {
     language: Option<String>,
     threads: i32,
     initial_prompt: Option<String>,
+    suppress_native_logs: bool,
 }
 
 impl Transcriber {
@@ -14,6 +15,7 @@ impl Transcriber {
         cfg: &TranscriptionConfig,
         initial_prompt: Option<String>,
         debug: bool,
+        suppress_native_logs: bool,
     ) -> Result<Self, TranscriptionError> {
         let model_path = resolve_path(&cfg.model_path);
         let mut ctx_params = WhisperContextParameters::new();
@@ -33,6 +35,7 @@ impl Transcriber {
             language: cfg.language.clone(),
             threads,
             initial_prompt,
+            suppress_native_logs,
         })
     }
 
@@ -40,6 +43,11 @@ impl Transcriber {
         if audio.is_empty() {
             return Ok(String::new());
         }
+        let _silencer = if self.suppress_native_logs {
+            StderrSilencer::new()
+        } else {
+            None
+        };
         let mut state = self
             .ctx
             .create_state()
@@ -88,6 +96,51 @@ impl Transcriber {
         }
         Ok(transcript)
     }
+}
+
+struct StderrSilencer {
+    saved_fd: i32,
+}
+
+impl StderrSilencer {
+    fn new() -> Option<Self> {
+        unsafe {
+            let saved_fd = _dup(2);
+            if saved_fd == -1 {
+                return None;
+            }
+            let nul = std::fs::OpenOptions::new().write(true).open("NUL").ok()?;
+            let handle = std::os::windows::io::IntoRawHandle::into_raw_handle(nul);
+            let nul_fd = _open_osfhandle(handle as isize, 0);
+            if nul_fd == -1 {
+                let _ = _close(saved_fd);
+                return None;
+            }
+            if _dup2(nul_fd, 2) == -1 {
+                let _ = _close(nul_fd);
+                let _ = _close(saved_fd);
+                return None;
+            }
+            let _ = _close(nul_fd);
+            Some(Self { saved_fd })
+        }
+    }
+}
+
+impl Drop for StderrSilencer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = _dup2(self.saved_fd, 2);
+            let _ = _close(self.saved_fd);
+        }
+    }
+}
+
+extern "C" {
+    fn _dup(fd: i32) -> i32;
+    fn _dup2(fd: i32, fd2: i32) -> i32;
+    fn _close(fd: i32) -> i32;
+    fn _open_osfhandle(osfhandle: isize, flags: i32) -> i32;
 }
 
 fn resolve_path(path: &Path) -> String {

@@ -146,6 +146,7 @@ async fn run() -> Result<(), BuddyError> {
         &config.transcription,
         initial_prompt,
         debug,
+        !whisper_log,
     )?);
     if debug {
         println!("Whisper system info: {}", whisper_rs::print_system_info());

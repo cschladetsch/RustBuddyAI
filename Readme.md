@@ -4,6 +4,10 @@ A local, privacy-first voice assistant for Windows. Control your PC with natural
 
 **Core Principle:** Everything stays on your machine. No cloud. No telemetry. No paid APIs.
 
+## Example
+
+![Demo](resources/Buddy1.png)
+
 ## Status
 
 **Current Version:** 0.1.0-alpha (MVP)  
