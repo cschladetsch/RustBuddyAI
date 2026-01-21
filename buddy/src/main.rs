@@ -24,8 +24,14 @@ async fn main() {
 }
 
 async fn run() -> Result<(), BuddyError> {
-    let config_path = std::env::args()
-        .nth(1)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--list-audio") {
+        audio::print_input_devices()?;
+        return Ok(());
+    }
+    let config_path = args
+        .first()
+        .cloned()
         .unwrap_or_else(|| "config.toml".into());
     let config = match Config::load(&config_path) {
         Ok(cfg) => cfg,

@@ -87,30 +87,9 @@ pub enum TranscriptionError {
 impl std::fmt::Display for TranscriptionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-<<<<<<< HEAD
-            #[cfg(target_os = "windows")]
-            Self::Windows(err) => write!(f, "windows speech recognition error: {}", err),
-            #[cfg(target_os = "windows")]
-            Self::CompilationStatus(status) => {
-                write!(f, "failed to compile recognition constraints: {:?}", status)
-            }
-            #[cfg(target_os = "windows")]
-            Self::RecognitionStatus(status) => {
-                let hint = match status.0 {
-                    6 => " (Unknown error - check microphone permissions in Windows Settings → Privacy & Security → Microphone, and ensure Speech Recognition is enabled in Settings → Time & Language → Speech)",
-                    4 => " (Audio quality failure - check microphone)",
-                    10 => " (Microphone unavailable)",
-                    _ => "",
-                };
-                write!(f, "speech recognition failed: {:?}{}", status, hint)
-            }
-            #[cfg(not(target_os = "windows"))]
-            Self::Unsupported(msg) => write!(f, "{}", msg),
-=======
             Self::Model(err) => write!(f, "failed to load Whisper model: {}", err),
             Self::State(err) => write!(f, "failed to initialize Whisper state: {}", err),
             Self::Inference(err) => write!(f, "transcription error: {}", err),
->>>>>>> 11a2248 (Switch to local Whisper transcription)
         }
     }
 }

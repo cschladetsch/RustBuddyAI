@@ -21,7 +21,7 @@ timeout_secs = 5
 
 [transcription]
 # Path to a Whisper model (download via scripts/fetch_whisper_model.ps1)
-model_path = "models/ggml-base.en.bin"
+model_path = "buddy/models/ggml-base.en.bin"
 # Force a language (remove to let Whisper auto-detect)
 language = "en"
 # threads = 4

@@ -233,7 +233,7 @@ impl Default for TranscriptionConfig {
 
 impl TranscriptionConfig {
     fn default_model_path() -> PathBuf {
-        PathBuf::from("models/ggml-base.en.bin")
+        PathBuf::from("buddy/models/ggml-base.en.bin")
     }
 }
 
