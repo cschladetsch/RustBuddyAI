@@ -1,6 +1,6 @@
 @echo off
 setlocal
-if not defined BUDDY_CUDA set "BUDDY_CUDA=1"
+if not defined BUDDY_CUDA set "BUDDY_CUDA=0"
 if defined CUDA_PATH (
   if exist "%CUDA_PATH%\bin" set "PATH=%CUDA_PATH%\bin;%PATH%"
 )
