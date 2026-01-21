@@ -80,14 +80,12 @@ pub struct DeepSeekConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TranscriptionConfig {
+    #[serde(default = "TranscriptionConfig::default_model_path")]
+    pub model_path: PathBuf,
     #[serde(default)]
-    pub language_tag: Option<String>,
-    #[serde(default = "TranscriptionConfig::default_topic_hint")]
-    pub topic_hint: String,
+    pub language: Option<String>,
     #[serde(default)]
-    pub initial_silence_timeout_ms: Option<u64>,
-    #[serde(default)]
-    pub end_silence_timeout_ms: Option<u64>,
+    pub threads: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -226,17 +224,16 @@ impl DeepSeekConfig {
 impl Default for TranscriptionConfig {
     fn default() -> Self {
         Self {
-            language_tag: None,
-            topic_hint: Self::default_topic_hint(),
-            initial_silence_timeout_ms: None,
-            end_silence_timeout_ms: None,
+            model_path: Self::default_model_path(),
+            language: None,
+            threads: None,
         }
     }
 }
 
 impl TranscriptionConfig {
-    fn default_topic_hint() -> String {
-        "dictation".to_string()
+    fn default_model_path() -> PathBuf {
+        PathBuf::from("models/ggml-base.en.bin")
     }
 }
 

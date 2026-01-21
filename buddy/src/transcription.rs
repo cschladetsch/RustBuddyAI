@@ -1,186 +1,93 @@
-use crate::config::{AudioConfig, TranscriptionConfig};
+use crate::config::TranscriptionConfig;
+use std::path::Path;
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-#[cfg(target_os = "windows")]
-use std::time::Duration;
-
-#[cfg(target_os = "windows")]
-use windows::{
-    core::HSTRING,
-    Foundation::TimeSpan,
-    Globalization::Language,
-    Media::SpeechRecognition::{
-        SpeechRecognitionResultStatus, SpeechRecognitionScenario, SpeechRecognitionTopicConstraint,
-        SpeechRecognizer,
-    },
-    Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
-};
-
-#[cfg(target_os = "windows")]
 pub struct Transcriber {
-    _guard: RoGuard,
-    recognizer: SpeechRecognizer,
+    ctx: WhisperContext,
+    language: Option<String>,
+    threads: i32,
 }
 
-#[cfg(not(target_os = "windows"))]
-pub struct Transcriber;
-
 impl Transcriber {
-    #[cfg(target_os = "windows")]
-    pub fn new(
-        cfg: &TranscriptionConfig,
-        audio_cfg: &AudioConfig,
-    ) -> Result<Self, TranscriptionError> {
-        let guard = RoGuard::new()?;
-        let recognizer = create_recognizer(cfg)?;
-        configure_topic(&recognizer, cfg)?;
-        configure_timeouts(&recognizer, cfg, audio_cfg)?;
-        compile_constraints(&recognizer)?;
+    pub fn new(cfg: &TranscriptionConfig) -> Result<Self, TranscriptionError> {
+        let model_path = resolve_path(&cfg.model_path);
+        let ctx = WhisperContext::new_with_params(&model_path, WhisperContextParameters::default())
+            .map_err(|err| TranscriptionError::Model(err.to_string()))?;
+        let threads = cfg
+            .threads
+            .unwrap_or_else(|| num_cpus::get().max(1))
+            .clamp(1, 16) as i32;
         Ok(Self {
-            _guard: guard,
-            recognizer,
+            ctx,
+            language: cfg.language.clone(),
+            threads,
         })
     }
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn new(
-        _cfg: &TranscriptionConfig,
-        _audio_cfg: &AudioConfig,
-    ) -> Result<Self, TranscriptionError> {
-        Err(TranscriptionError::Unsupported(
-            "Windows speech recognition is only available on Windows",
-        ))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn transcribe(&self) -> Result<String, TranscriptionError> {
-        let result = self.recognizer.RecognizeAsync()?.get()?;
-        match result.Status()? {
-            SpeechRecognitionResultStatus::Success => Ok(result.Text()?.to_string()),
-            SpeechRecognitionResultStatus::TimeoutExceeded
-            | SpeechRecognitionResultStatus::PauseLimitExceeded => Ok(String::new()),
-            other => Err(TranscriptionError::RecognitionStatus(other)),
+    pub fn transcribe(&self, audio: &[i16]) -> Result<String, TranscriptionError> {
+        if audio.is_empty() {
+            return Ok(String::new());
         }
-    }
+        let mut state = self
+            .ctx
+            .create_state()
+            .map_err(|err| TranscriptionError::State(err.to_string()))?;
+        let mut params = FullParams::new(SamplingStrategy::default());
+        params.set_n_threads(self.threads);
+        if let Some(lang) = &self.language {
+            params.set_language(Some(lang));
+        }
 
-    #[cfg(not(target_os = "windows"))]
-    pub fn transcribe(&self) -> Result<String, TranscriptionError> {
-        Err(TranscriptionError::Unsupported(
-            "Windows speech recognition is only available on Windows",
-        ))
+        let audio_f32: Vec<f32> = audio
+            .iter()
+            .map(|sample| *sample as f32 / i16::MAX as f32)
+            .collect();
+        state
+            .full(params, &audio_f32)
+            .map_err(|err| TranscriptionError::Inference(err.to_string()))?;
+
+        let num_segments = state
+            .full_n_segments()
+            .map_err(|err| TranscriptionError::State(err.to_string()))?;
+        let mut transcript = String::new();
+        for idx in 0..num_segments {
+            if let Ok(segment) = state.full_get_segment_text(idx) {
+                let text = segment.trim();
+                if !text.is_empty() {
+                    if !transcript.is_empty() {
+                        transcript.push(' ');
+                    }
+                    transcript.push_str(text);
+                }
+            }
+        }
+        Ok(transcript)
     }
 }
 
-#[cfg(target_os = "windows")]
-fn create_recognizer(cfg: &TranscriptionConfig) -> Result<SpeechRecognizer, TranscriptionError> {
-    if let Some(tag) = cfg
-        .language_tag
-        .as_deref()
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-    {
-        let language = Language::CreateLanguage(&HSTRING::from(tag))?;
-        SpeechRecognizer::Create(&language).map_err(TranscriptionError::from)
+fn resolve_path(path: &Path) -> String {
+    if path.is_absolute() {
+        path.to_string_lossy().to_string()
     } else {
-        SpeechRecognizer::new().map_err(TranscriptionError::from)
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn configure_topic(
-    recognizer: &SpeechRecognizer,
-    cfg: &TranscriptionConfig,
-) -> Result<(), TranscriptionError> {
-    let constraints = recognizer.Constraints()?;
-    constraints.Clear()?;
-    let hint = cfg
-        .topic_hint
-        .trim()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    let topic = if hint.is_empty() { "dictation" } else { &hint };
-    let constraint = SpeechRecognitionTopicConstraint::Create(
-        SpeechRecognitionScenario::Dictation,
-        &HSTRING::from(topic),
-    )?;
-    constraints.Append(&constraint)?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn configure_timeouts(
-    recognizer: &SpeechRecognizer,
-    cfg: &TranscriptionConfig,
-    audio_cfg: &AudioConfig,
-) -> Result<(), TranscriptionError> {
-    let timeouts = recognizer.Timeouts()?;
-    let initial = cfg
-        .initial_silence_timeout_ms
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_secs(audio_cfg.capture_duration_secs.max(1)));
-    let end_silence = cfg
-        .end_silence_timeout_ms
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_millis(1200));
-    timeouts.SetInitialSilenceTimeout(duration_to_timespan(initial))?;
-    timeouts.SetEndSilenceTimeout(duration_to_timespan(end_silence))?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn compile_constraints(recognizer: &SpeechRecognizer) -> Result<(), TranscriptionError> {
-    let compilation = recognizer.CompileConstraintsAsync()?.get()?;
-    match compilation.Status()? {
-        SpeechRecognitionResultStatus::Success => Ok(()),
-        other => Err(TranscriptionError::CompilationStatus(other)),
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn duration_to_timespan(duration: Duration) -> TimeSpan {
-    const HUNDRED_NANOS_PER_SEC: i64 = 10_000_000;
-    let secs = (duration.as_secs() as i64).saturating_mul(HUNDRED_NANOS_PER_SEC);
-    let nanos = (duration.subsec_nanos() as i64) / 100;
-    TimeSpan {
-        Duration: secs.saturating_add(nanos),
-    }
-}
-
-#[cfg(target_os = "windows")]
-struct RoGuard;
-
-#[cfg(target_os = "windows")]
-impl RoGuard {
-    fn new() -> Result<Self, TranscriptionError> {
-        unsafe { RoInitialize(RO_INIT_MULTITHREADED) }?;
-        Ok(Self)
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for RoGuard {
-    fn drop(&mut self) {
-        unsafe {
-            RoUninitialize();
-        }
+        std::env::current_dir()
+            .unwrap_or_else(|_| Path::new(".").to_path_buf())
+            .join(path)
+            .to_string_lossy()
+            .to_string()
     }
 }
 
 #[derive(Debug)]
 pub enum TranscriptionError {
-    #[cfg(target_os = "windows")]
-    Windows(windows::core::Error),
-    #[cfg(target_os = "windows")]
-    CompilationStatus(SpeechRecognitionResultStatus),
-    #[cfg(target_os = "windows")]
-    RecognitionStatus(SpeechRecognitionResultStatus),
-    #[cfg(not(target_os = "windows"))]
-    Unsupported(&'static str),
+    Model(String),
+    State(String),
+    Inference(String),
 }
 
 impl std::fmt::Display for TranscriptionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+<<<<<<< HEAD
             #[cfg(target_os = "windows")]
             Self::Windows(err) => write!(f, "windows speech recognition error: {}", err),
             #[cfg(target_os = "windows")]
@@ -199,24 +106,13 @@ impl std::fmt::Display for TranscriptionError {
             }
             #[cfg(not(target_os = "windows"))]
             Self::Unsupported(msg) => write!(f, "{}", msg),
+=======
+            Self::Model(err) => write!(f, "failed to load Whisper model: {}", err),
+            Self::State(err) => write!(f, "failed to initialize Whisper state: {}", err),
+            Self::Inference(err) => write!(f, "transcription error: {}", err),
+>>>>>>> 11a2248 (Switch to local Whisper transcription)
         }
     }
 }
 
-impl std::error::Error for TranscriptionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        #[allow(clippy::match_single_binding)]
-        match self {
-            #[cfg(target_os = "windows")]
-            Self::Windows(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl From<windows::core::Error> for TranscriptionError {
-    fn from(err: windows::core::Error) -> Self {
-        Self::Windows(err)
-    }
-}
+impl std::error::Error for TranscriptionError {}

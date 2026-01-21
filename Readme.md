@@ -49,8 +49,8 @@ Press configured hotkey (default: `Ctrl+Alt+B`), speak your command, wait for co
 
 ```mermaid
 flowchart TD
-    A[Hotkey Press] --> B[Invoke Windows Speech Recognition]
-    B --> C[Native Transcription]
+    A[Hotkey Press] --> B[Audio Capture]
+    B --> C[Local Whisper STT]
     C --> D[Load Config]
     D --> E[Send to DeepSeek<br/>Local API]
     E --> F[Parse Intent]
@@ -70,14 +70,15 @@ flowchart TD
 sequenceDiagram
     participant User
     participant Buddy
-    participant WSR as Windows Speech
+    participant Mic as Microphone
+    participant Whisper
     participant DS as DeepSeek Local
     participant OS as Windows
 
     User->>Buddy: Press Ctrl+Alt+B
-    Buddy->>WSR: Start Listening
-    User->>WSR: "Open my resume"
-    WSR->>Buddy: "open my resume"
+    Buddy->>Mic: Record audio
+    Mic->>Whisper: 16k PCM
+    Whisper->>Buddy: "open my resume"
     Buddy->>DS: Intent Request + Config
     DS->>Buddy: {"action": "open", "target": "resume"}
     Buddy->>OS: Open resume.docx
@@ -95,8 +96,11 @@ one it falls back to `config.toml` in the current working directory (keep it nex
 
 ```toml
 [audio]
+# Optional microphone name, defaults to system input
+# device_name = "Blue Yeti"
 # How long Buddy waits for you to start speaking (seconds)
 capture_duration_secs = 3
+sample_rate = 16000
 
 [hotkey]
 # Trigger combination to start listening
@@ -116,11 +120,11 @@ model = "deepseek-r1:latest"
 timeout_secs = 5
 
 [transcription]
-# Optional Windows speech settings
-language_tag = "en-US"
-topic_hint = "voice commands"
-initial_silence_timeout_ms = 3000
-end_silence_timeout_ms = 1200
+# Path to a Whisper model (download via scripts/fetch_whisper_model.sh)
+model_path = "models/ggml-base.en.bin"
+# Force a language (remove to auto-detect)
+language = "en"
+# threads = 4
 
 # File mappings - "open X" commands
 [files]
@@ -150,11 +154,12 @@ lock = true
 ## Dependencies
 
 ### Core
-- **windows** - Win32/WINRT hotkey, speech recognition, and system integration
+- **whisper-rs** - Local Whisper inference
+- **cpal** - Audio capture from Windows input devices
+- **windows** - Win32 APIs for hotkeys/system actions
 - **reqwest** - HTTP client for DeepSeek API calls
-- **serde / serde_json** - Config parsing and intent JSON parsing
+- **serde / serde_json / toml** - Config and JSON parsing
 - **tokio** - Async runtime for the hotkey listener + HTTP
-- **toml** - Config file parsing
 
 ### Audio/Feedback
 - **rodio** - Audio playback for confirmation/error sounds
@@ -174,12 +179,15 @@ sudo apt update
 sudo apt install -y mingw-w64
 ```
 
-### 2. Enable Windows Speech Recognition
+### 2. Download a Whisper Model
 
-- On Windows, open **Settings → Time & Language → Speech**
-- Make sure "Speech language" is installed (e.g., English (United States))
-- Grant microphone access to desktop apps (Settings → Privacy & security → Microphone)
-- Nothing to download — Buddy uses the built-in recognizer
+```powershell
+# From repo root
+cd buddy
+
+# Download the default base English model (~140MB)
+scripts/fetch_whisper_model.ps1 ggml-base.en.bin
+```
 
 ### 3. Setup DeepSeek Local
 
@@ -196,30 +204,16 @@ curl http://localhost:11434/api/tags
 
 ### 4. Create Config
 
-```bash
-# From the repo root
-cd buddy  # skip if already inside
-
-# Copy example config
-cp config.example.toml config.toml
-
-# Edit with your paths
-vim config.toml  # or nano, or whatever
-```
+Copy `buddy/config.example.toml` to `config.toml` and edit paths on Windows (Notepad or any editor).
 
 ### 5. Build and Run
 
-```bash
-# Build for Windows from WSL2
-cd buddy  # ensure we are inside the crate
-cargo build --target x86_64-pc-windows-gnu --release
+From PowerShell (with MinGW and Whisper model ready):
 
-# Copy to Windows accessible location
-cp target/x86_64-pc-windows-gnu/release/buddy.exe /mnt/c/Users/YourName/buddy.exe
-
-# Run from Windows (double-click or via cmd)
-# Or run directly from WSL2:
-/mnt/c/Users/YourName/buddy.exe
+```powershell
+cd buddy
+scripts/build_windows.ps1
+& ..\target\x86_64-pc-windows-gnu\release\buddy.exe
 ```
 
 ## Usage
@@ -263,14 +257,14 @@ User: "what's the weather" → {"action": "unknown", "target": null, "confidence
 buddy/
 ├── src/
 │   ├── main.rs              # Entry point, hotkey handling
-│   ├── transcription.rs     # Windows Speech Recognition bridge
+│   ├── audio.rs             # Microphone capture via cpal
+│   ├── transcription.rs     # Whisper transcription
 │   ├── intent.rs            # DeepSeek API client
 │   ├── executor.rs          # Command execution
 │   ├── feedback.rs          # Audio/TTS responses
 │   ├── config.rs            # Config loading and validation
 │   └── windows_api.rs       # Windows-specific system commands
 ├── assets/                  # Audio feedback files
-├── config.toml             # User configuration
 ├── config.example.toml     # Template
 └── Cargo.toml
 ```
@@ -298,7 +292,7 @@ cargo watch -x 'build --target x86_64-pc-windows-gnu'
 ### v0.1 (MVP - Today's Goal)
 - [x] Hotkey activation
 - [x] Audio capture from Blue Yeti
-- [x] Native Windows speech recognition
+- [x] Local Whisper speech recognition
 - [x] DeepSeek intent parsing
 - [x] File opening
 - [x] App launching
@@ -342,9 +336,10 @@ ollama list | grep deepseek
 ```
 
 ### Transcription Fails
-- Make sure Windows Speech Recognition works in Settings
-- Run the built-in speech training for better accuracy
-- Check microphone privacy settings and disable "Allow desktop apps to access your microphone" off/on
+- Confirm the Whisper model path in `[transcription]` exists (run `scripts/fetch_whisper_model.sh` again if needed).
+- Keep `sample_rate` at 16000 so the captured audio matches Whisper's expectations.
+- Lower background noise or increase `capture_duration_secs` if the end of commands gets clipped.
+- If you see out-of-memory errors, switch to a smaller model (e.g., `ggml-small.en.bin`).
 
 ### Commands Not Executing
 - Launch `buddy.exe` from a terminal/PowerShell window to watch the stdout/stderr logs.
@@ -364,7 +359,7 @@ linker = "x86_64-w64-mingw32-gcc"
 ## Performance Targets
 
 - **Hotkey to Listening**: < 100ms
-- **Transcription**: < 2s (Windows Speech Recognition)
+- **Transcription**: < 2s (Whisper base model)
 - **DeepSeek Intent**: < 1s
 - **Command Execution**: < 500ms
 - **Total Latency**: < 4s from speech end to action
@@ -387,7 +382,7 @@ MIT - Do whatever you want with it.
 Built by Christian Schladetsch as a practical tool for voice-controlling Windows without cloud dependencies.
 
 **Technologies:**
-- [Windows Speech Recognition](https://learn.microsoft.com/windows/apps/design/input/speech-recognition) - Built-in transcription
+- [Whisper](https://github.com/openai/whisper) via [whisper.cpp](https://github.com/ggerganov/whisper.cpp) bindings
 - [DeepSeek](https://www.deepseek.com/) - Local LLM for intent parsing
 - [Rust](https://www.rust-lang.org/) - Because memory safety matters for always-on services
 
