@@ -49,6 +49,13 @@ impl FeedbackPlayer {
         }
     }
 
+    pub fn say(&mut self, message: &str) {
+        match self.mode {
+            FeedbackMode::Sound => {}
+            FeedbackMode::Tts | FeedbackMode::Both => self.speak(message),
+        }
+    }
+
     pub fn error(&mut self, message: &str) {
         match self.mode {
             FeedbackMode::Sound => {

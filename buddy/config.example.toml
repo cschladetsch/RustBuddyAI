@@ -1,7 +1,7 @@
 [audio]
 # Optional microphone name, defaults to system input
 # device_name = "Blue Yeti"
-# How long Buddy waits for speech before timing out (seconds)
+# How long Buddy records audio (seconds)
 capture_duration_secs = 3
 sample_rate = 16000
 
@@ -17,11 +17,11 @@ tts_voice = "default"
 [deepseek]
 endpoint = "http://localhost:11434/api/chat"
 model = "deepseek-r1:latest"
-timeout_secs = 5
+timeout_secs = 60
 
 [transcription]
 # Path to a Whisper model (download via scripts/fetch_whisper_model.ps1)
-model_path = "buddy/models/ggml-base.en.bin"
+model_path = "models/ggml-base.en.bin"
 # Force a language (remove to let Whisper auto-detect)
 language = "en"
 # threads = 4

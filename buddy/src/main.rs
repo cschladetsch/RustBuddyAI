@@ -9,10 +9,10 @@ mod windows_api;
 
 use audio::AudioCapturer;
 use config::Config;
-use executor::CommandExecutor;
+use executor::{CommandExecutor, ExecutionResult};
 use feedback::FeedbackPlayer;
 use hotkey::{HotkeyError, HotkeyListener};
-use intent::{IntentAction, IntentClient, IntentError, IntentResponse};
+use intent::{Intent, IntentClient, IntentError};
 use std::{sync::Arc, time::Duration};
 use transcription::Transcriber;
 
@@ -25,6 +25,7 @@ async fn main() {
 
 async fn run() -> Result<(), BuddyError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut test_phrases: Vec<String> = Vec::new();
     if args.iter().any(|arg| arg == "--list-audio") {
         audio::print_input_devices()?;
         return Ok(());
@@ -32,15 +33,28 @@ async fn run() -> Result<(), BuddyError> {
     let mut config_path = None;
     let mut debug_override: Option<bool> = None;
     let mut whisper_log_override: Option<bool> = None;
-    for arg in &args {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
         match arg.as_str() {
             "--debug" => debug_override = Some(true),
             "--no-debug" => debug_override = Some(false),
             "--whisper-log" => whisper_log_override = Some(true),
             "--no-whisper-log" => whisper_log_override = Some(false),
-            _ if config_path.is_none() => config_path = Some(arg.clone()),
+            "--test-intent" => {
+                let next = args.get(index + 1);
+                if let Some(phrase) = next {
+                    test_phrases.push(phrase.clone());
+                    index += 1;
+                } else {
+                    eprintln!("Missing value for --test-intent");
+                    return Ok(());
+                }
+            }
+            _ if config_path.is_none() && !arg.starts_with("--") => config_path = Some(arg.clone()),
             _ => {}
         }
+        index += 1;
     }
     let config_path = config_path.unwrap_or_else(|| "config.toml".into());
     let config = match Config::load(&config_path) {
@@ -70,10 +84,28 @@ async fn run() -> Result<(), BuddyError> {
         }
     }
 
+    let intent_client = IntentClient::new(&config);
+    wait_for_intent_ready(&intent_client).await?;
+    if !test_phrases.is_empty() {
+        for phrase in test_phrases {
+            println!("Input: {}", phrase);
+            match intent_client.infer_intent(&phrase, &config).await {
+                Ok(intent) => {
+                    println!(
+                        "Output: action={:?} confidence={:.2}",
+                        intent.action(),
+                        intent.confidence()
+                    );
+                }
+                Err(err) => eprintln!("Intent error: {}", err),
+            }
+        }
+        return Ok(());
+    }
+
     let capturer = Arc::new(AudioCapturer::new(&config.audio, debug)?);
     let initial_prompt = build_transcription_prompt(&config);
     let transcriber = Arc::new(Transcriber::new(&config.transcription, initial_prompt)?);
-    let intent_client = IntentClient::new(&config);
     let executor = CommandExecutor::new(&config);
     let mut feedback = FeedbackPlayer::new(&config.feedback);
     let mut hotkey = HotkeyListener::new(&config.hotkey)?;
@@ -110,6 +142,27 @@ async fn run() -> Result<(), BuddyError> {
         };
         handle_intent(&executor, intent, &mut feedback);
     }
+}
+
+async fn wait_for_intent_ready(intent_client: &IntentClient) -> Result<(), IntentError> {
+    let attempts = 240;
+    let delay = Duration::from_secs(1);
+    for attempt in 1..=attempts {
+        match intent_client.wait_for_ready().await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if attempt == attempts {
+                    return Err(err);
+                }
+                eprintln!(
+                    "Intent service not ready (attempt {}/{}): {}",
+                    attempt, attempts, err
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn build_transcription_prompt(config: &Config) -> Option<String> {
@@ -169,25 +222,29 @@ unsafe extern "C" fn silent_whisper_log(
 
 fn handle_intent(
     executor: &CommandExecutor<'_>,
-    intent: IntentResponse,
+    intent: Intent,
     feedback: &mut FeedbackPlayer,
 ) {
-    let confidence = intent.confidence;
-    match intent.action {
-        IntentAction::Unknown => {
-            eprintln!("Intent not recognized");
-            feedback.error("I don't know how to do that");
-        }
-        _ => match executor.execute(&intent) {
-            Ok(message) => {
+    let confidence = intent.confidence();
+    match executor.execute(&intent) {
+        Ok(result) => match result {
+            ExecutionResult::Action(message) => {
                 println!("{} (confidence {:.2})", message, confidence);
                 feedback.success();
             }
-            Err(err) => {
-                eprintln!("Action failed: {}", err);
-                feedback.error("Command failed");
+            ExecutionResult::Answer(response) => {
+                println!("Answer: {} (confidence {:.2})", response, confidence);
+                feedback.say(&response);
             }
         },
+        Err(err) => {
+            eprintln!("Action failed: {}", err);
+            if matches!(err, executor::ExecutionError::UnknownIntent) {
+                feedback.error("I don't know how to do that");
+            } else {
+                feedback.error("Command failed");
+            }
+        }
     }
 }
 

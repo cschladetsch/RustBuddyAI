@@ -87,12 +87,21 @@ impl AudioCapturer {
             .map_err(AudioError::DefaultConfig)?;
         let sample_format = supported.sample_format();
         let mut stream_config: StreamConfig = supported.config().clone();
-        stream_config.sample_rate = SampleRate(cfg.sample_rate);
+        let requested_rate = cfg.sample_rate;
+        let selected_rate = select_sample_rate(&device, sample_format, stream_config.channels, requested_rate)
+            .unwrap_or(stream_config.sample_rate.0);
+        stream_config.sample_rate = SampleRate(selected_rate);
         let channels = stream_config.channels as usize;
         if debug {
             let device_name = device
                 .name()
                 .unwrap_or_else(|_| "Unknown input device".to_string());
+            if selected_rate != requested_rate {
+                println!(
+                    "Requested {} Hz not supported; using {} Hz",
+                    requested_rate, selected_rate
+                );
+            }
             println!(
                 "Using input device: {} ({} ch @ {} Hz, {:?})",
                 device_name,
@@ -102,12 +111,13 @@ impl AudioCapturer {
             );
         }
 
+        let actual_rate = stream_config.sample_rate.0;
         Ok(Self {
             device,
             config: stream_config,
             sample_format,
             channels,
-            sample_rate: cfg.sample_rate,
+            sample_rate: actual_rate,
             debug,
         })
     }
@@ -204,6 +214,24 @@ impl AudioCapturer {
         let mut data = buffer.lock().map_err(|_| AudioError::BufferAccess)?;
         Ok(std::mem::take(&mut *data))
     }
+}
+
+fn select_sample_rate(
+    device: &Device,
+    sample_format: SampleFormat,
+    channels: u16,
+    requested: u32,
+) -> Option<u32> {
+    let configs = device.supported_input_configs().ok()?;
+    for cfg in configs {
+        if cfg.sample_format() != sample_format || cfg.channels() != channels {
+            continue;
+        }
+        if requested >= cfg.min_sample_rate().0 && requested <= cfg.max_sample_rate().0 {
+            return Some(requested);
+        }
+    }
+    None
 }
 
 fn peak_rms(samples: &[i16]) -> (i16, f64) {

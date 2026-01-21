@@ -26,9 +26,9 @@ impl IntentClient {
         &self,
         transcription: &str,
         config: &Config,
-    ) -> Result<IntentResponse, IntentError> {
+    ) -> Result<Intent, IntentError> {
         if transcription.trim().is_empty() {
-            return Ok(IntentResponse::unknown());
+            return Ok(Intent::Unknown { confidence: 0.0 });
         }
 
         let prompt = build_prompt(transcription, config);
@@ -59,7 +59,26 @@ impl IntentClient {
             .as_ref()
             .map(|msg| msg.content.trim())
             .unwrap_or_default();
-        parse_intent(content)
+        let intent = parse_intent(content)?;
+        validate_intent_target(&intent, config)?;
+        Ok(intent)
+    }
+
+    pub async fn wait_for_ready(&self) -> Result<(), IntentError> {
+        let tags_endpoint = if self.endpoint.ends_with("/api/chat") {
+            self.endpoint.replace("/api/chat", "/api/tags")
+        } else {
+            self.endpoint.clone()
+        };
+        self.client
+            .get(&tags_endpoint)
+            .send()
+            .await
+            .map_err(IntentError::Request)?
+            .error_for_status()
+            .map_err(IntentError::Http)?;
+
+        Ok(())
     }
 }
 
@@ -68,7 +87,7 @@ fn build_prompt(transcription: &str, config: &Config) -> String {
     let apps = config.app_keys().join(", ");
     let systems = config.system_actions().join(", ");
     format!(
-        "You interpret voice commands.\nUser said: \"{transcription}\"\nFILES: [{files}]\nAPPS: [{apps}]\nSYSTEM: [{systems}]\nReturn JSON only (no markdown, no code fences) with keys action, target, confidence.",
+        "You interpret voice commands for a desktop assistant.\nUser said: \"{transcription}\"\nAvailable files: {files}\nAvailable apps: {apps}\nAvailable system actions: {systems}\nRules:\n- action must be one of: open_file, open_app, system, answer, unknown\n- use open_file/open_app/system only when the request matches an available key\n- for action=answer, provide a direct response text and set target to null\n- if unsure, use action=unknown and target=null\nExamples:\nInput: \"open my resume\" => {{\"action\":\"open_file\",\"target\":\"resume\",\"response\":null,\"confidence\":0.9}}\nInput: \"start chrome\" => {{\"action\":\"open_app\",\"target\":\"chrome\",\"response\":null,\"confidence\":0.8}}\nInput: \"turn volume down\" => {{\"action\":\"system\",\"target\":\"volume_down\",\"response\":null,\"confidence\":0.8}}\nInput: \"what is 2+3\" => {{\"action\":\"answer\",\"target\":null,\"response\":\"5\",\"confidence\":0.9}}\nReturn JSON only (no markdown, no code fences) with keys action, target, response, confidence.",
         transcription = transcription,
         files = files,
         apps = apps,
@@ -76,7 +95,7 @@ fn build_prompt(transcription: &str, config: &Config) -> String {
     )
 }
 
-fn parse_intent(raw: &str) -> Result<IntentResponse, IntentError> {
+fn parse_intent(raw: &str) -> Result<Intent, IntentError> {
     let cleaned = raw.trim();
     let cleaned = cleaned
         .strip_prefix("```json")
@@ -90,6 +109,31 @@ fn parse_intent(raw: &str) -> Result<IntentResponse, IntentError> {
         err,
     })?;
     Ok(parsed.into())
+}
+
+fn validate_intent_target(
+    intent: &Intent,
+    config: &Config,
+) -> Result<(), IntentError> {
+    match intent {
+        Intent::OpenFile { target, .. } => {
+            if !config.files.contains_key(target) {
+                return Err(IntentError::UnknownTarget(target.to_string()));
+            }
+        }
+        Intent::OpenApp { target, .. } => {
+            if !config.applications.contains_key(target) {
+                return Err(IntentError::UnknownTarget(target.to_string()));
+            }
+        }
+        Intent::System { target, .. } => {
+            if !config.system_actions().contains(&target.as_str()) {
+                return Err(IntentError::UnknownTarget(target.to_string()));
+            }
+        }
+        Intent::Answer { .. } | Intent::Unknown { .. } => {}
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,25 +161,40 @@ struct ChatResponseMessage {
 
 #[derive(Debug, Clone, Copy)]
 pub enum IntentAction {
-    Open,
-    Launch,
+    OpenFile,
+    OpenApp,
     System,
+    Answer,
     Unknown,
 }
 
 #[derive(Debug, Clone)]
-pub struct IntentResponse {
-    pub action: IntentAction,
-    pub target: Option<String>,
-    pub confidence: f32,
+pub enum Intent {
+    OpenFile { target: String, confidence: f32 },
+    OpenApp { target: String, confidence: f32 },
+    System { target: String, confidence: f32 },
+    Answer { response: String, confidence: f32 },
+    Unknown { confidence: f32 },
 }
 
-impl IntentResponse {
-    fn unknown() -> Self {
-        Self {
-            action: IntentAction::Unknown,
-            target: None,
-            confidence: 0.0,
+impl Intent {
+    pub fn confidence(&self) -> f32 {
+        match self {
+            Self::OpenFile { confidence, .. }
+            | Self::OpenApp { confidence, .. }
+            | Self::System { confidence, .. }
+            | Self::Answer { confidence, .. }
+            | Self::Unknown { confidence, .. } => *confidence,
+        }
+    }
+
+    pub fn action(&self) -> IntentAction {
+        match self {
+            Self::OpenFile { .. } => IntentAction::OpenFile,
+            Self::OpenApp { .. } => IntentAction::OpenApp,
+            Self::System { .. } => IntentAction::System,
+            Self::Answer { .. } => IntentAction::Answer,
+            Self::Unknown { .. } => IntentAction::Unknown,
         }
     }
 }
@@ -144,10 +203,11 @@ impl IntentResponse {
 struct RawIntent {
     action: Option<String>,
     target: Option<String>,
+    response: Option<String>,
     confidence: Option<serde_json::Value>,
 }
 
-impl From<RawIntent> for IntentResponse {
+impl From<RawIntent> for Intent {
     fn from(raw: RawIntent) -> Self {
         let action = match raw
             .action
@@ -156,9 +216,10 @@ impl From<RawIntent> for IntentResponse {
             .to_lowercase()
             .as_str()
         {
-            "open" => IntentAction::Open,
-            "launch" => IntentAction::Launch,
+            "open_file" => IntentAction::OpenFile,
+            "open_app" => IntentAction::OpenApp,
             "system" => IntentAction::System,
+            "answer" => IntentAction::Answer,
             _ => IntentAction::Unknown,
         };
         let confidence = match raw.confidence {
@@ -172,10 +233,24 @@ impl From<RawIntent> for IntentResponse {
             Some(serde_json::Value::Bool(val)) => if val { 1.0 } else { 0.0 },
             _ => 0.0,
         };
-        Self {
-            action,
-            target: raw.target,
-            confidence,
+        match action {
+            IntentAction::OpenFile => raw
+                .target
+                .map(|target| Self::OpenFile { target, confidence })
+                .unwrap_or(Self::Unknown { confidence }),
+            IntentAction::OpenApp => raw
+                .target
+                .map(|target| Self::OpenApp { target, confidence })
+                .unwrap_or(Self::Unknown { confidence }),
+            IntentAction::System => raw
+                .target
+                .map(|target| Self::System { target, confidence })
+                .unwrap_or(Self::Unknown { confidence }),
+            IntentAction::Answer => raw
+                .response
+                .map(|response| Self::Answer { response, confidence })
+                .unwrap_or(Self::Unknown { confidence }),
+            IntentAction::Unknown => Self::Unknown { confidence },
         }
     }
 }
@@ -186,6 +261,7 @@ pub enum IntentError {
     Http(reqwest::Error),
     Response(reqwest::Error),
     InvalidFormat { raw: String, err: serde_json::Error },
+    UnknownTarget(String),
 }
 
 impl std::fmt::Display for IntentError {
@@ -197,6 +273,9 @@ impl std::fmt::Display for IntentError {
             Self::InvalidFormat { raw, err } => {
                 write!(f, "invalid intent payload '{}': {}", raw, err)
             }
+            Self::UnknownTarget(target) => {
+                write!(f, "unknown target '{}'", target)
+            }
         }
     }
 }
@@ -206,6 +285,7 @@ impl std::error::Error for IntentError {
         match self {
             Self::Request(err) | Self::Http(err) | Self::Response(err) => Some(err),
             Self::InvalidFormat { err, .. } => Some(err),
+            Self::UnknownTarget(_) => None,
         }
     }
 }

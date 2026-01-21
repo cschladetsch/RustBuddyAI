@@ -98,7 +98,7 @@ one it falls back to `config.toml` in the current working directory (keep it nex
 [audio]
 # Optional microphone name, defaults to system input
 # device_name = "Blue Yeti"
-# How long Buddy waits for you to start speaking (seconds)
+# How long Buddy records audio (seconds)
 capture_duration_secs = 3
 sample_rate = 16000
 
@@ -117,7 +117,7 @@ tts_voice = "default"                 # Windows SAPI voice
 # Local DeepSeek API endpoint
 endpoint = "http://localhost:11434/api/chat"
 model = "deepseek-r1:latest"
-timeout_secs = 5
+timeout_secs = 60
 
 [transcription]
 # Path to a Whisper model (download via scripts/fetch_whisper_model.sh)
@@ -239,17 +239,30 @@ SYSTEM: {list of enabled system actions}
 
 Respond with JSON only:
 {
-  "action": "open|launch|system|unknown",
+  "action": "open_file|open_app|system|answer|unknown",
   "target": "key from config or system command",
+  "response": "string for answers",
   "confidence": 0.0-1.0
 }
 
 Examples:
-User: "open my details" → {"action": "open", "target": "details", "confidence": 0.95}
-User: "launch chrome" → {"action": "launch", "target": "chrome", "confidence": 0.9}
-User: "shoosh" → {"action": "system", "target": "volume_mute", "confidence": 0.85}
-User: "what's the weather" → {"action": "unknown", "target": null, "confidence": 0.0}
+User: "open my details" → {"action": "open_file", "target": "details", "response": null, "confidence": 0.95}
+User: "launch chrome" → {"action": "open_app", "target": "chrome", "response": null, "confidence": 0.9}
+User: "shoosh" → {"action": "system", "target": "volume_mute", "response": null, "confidence": 0.85}
+User: "what is 2+3" → {"action": "answer", "target": null, "response": "5", "confidence": 0.9}
+User: "what's the weather" → {"action": "unknown", "target": null, "response": null, "confidence": 0.0}
 ```
+
+## Confidence Thresholds & Fallback (Recommended)
+
+In practice you'll want to ignore low-confidence intents to avoid accidental actions. A common
+pattern is:
+
+- If `confidence < 0.6`, treat it as `unknown` and return a short fallback message (e.g. "Please repeat").
+- Optionally log the transcript + confidence in debug mode so you can tune prompts later.
+
+This threshold is not configurable yet; if you want to harden behavior now, add the check in
+`buddy/src/main.rs` in `handle_intent`.
 
 ## Project Structure
 

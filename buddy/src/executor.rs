@@ -1,6 +1,6 @@
 use crate::{
     config::Config,
-    intent::{IntentAction, IntentResponse},
+    intent::Intent,
     windows_api::{self, SystemAction, WindowsActionError},
 };
 pub struct CommandExecutor<'a> {
@@ -12,20 +12,19 @@ impl<'a> CommandExecutor<'a> {
         Self { config }
     }
 
-    pub fn execute(&self, intent: &IntentResponse) -> Result<String, ExecutionError> {
-        match intent.action {
-            IntentAction::Open => self.open_target(intent),
-            IntentAction::Launch => self.launch_target(intent),
-            IntentAction::System => self.run_system(intent),
-            IntentAction::Unknown => Err(ExecutionError::UnknownIntent),
+    pub fn execute(&self, intent: &Intent) -> Result<ExecutionResult, ExecutionError> {
+        match intent {
+            Intent::OpenFile { target, .. } => self.open_target(target),
+            Intent::OpenApp { target, .. } => self.launch_target(target),
+            Intent::System { target, .. } => self.run_system(target),
+            Intent::Answer { response, .. } => {
+                Ok(ExecutionResult::Answer(response.clone()))
+            }
+            Intent::Unknown { .. } => Err(ExecutionError::UnknownIntent),
         }
     }
 
-    fn open_target(&self, intent: &IntentResponse) -> Result<String, ExecutionError> {
-        let key = intent
-            .target
-            .as_deref()
-            .ok_or(ExecutionError::MissingTarget)?;
+    fn open_target(&self, key: &str) -> Result<ExecutionResult, ExecutionError> {
         let path = self
             .config
             .files
@@ -39,31 +38,23 @@ impl<'a> CommandExecutor<'a> {
                 .join(path)
         };
         windows_api::open_path(&resolved).map_err(ExecutionError::Windows)?;
-        Ok(format!("Opened {}", key))
+        Ok(ExecutionResult::Action(format!("Opened {}", key)))
     }
 
-    fn launch_target(&self, intent: &IntentResponse) -> Result<String, ExecutionError> {
-        let key = intent
-            .target
-            .as_deref()
-            .ok_or(ExecutionError::MissingTarget)?;
+    fn launch_target(&self, key: &str) -> Result<ExecutionResult, ExecutionError> {
         let command = self
             .config
             .applications
             .get(key)
             .ok_or_else(|| ExecutionError::MissingMapping(key.to_string()))?;
         windows_api::launch(command).map_err(ExecutionError::Windows)?;
-        Ok(format!("Launched {}", key))
+        Ok(ExecutionResult::Action(format!("Launched {}", key)))
     }
 
-    fn run_system(&self, intent: &IntentResponse) -> Result<String, ExecutionError> {
-        let target = intent
-            .target
-            .as_deref()
-            .ok_or(ExecutionError::MissingTarget)?;
+    fn run_system(&self, target: &str) -> Result<ExecutionResult, ExecutionError> {
         let action = parse_system_action(target)?;
         windows_api::execute_system(action).map_err(ExecutionError::Windows)?;
-        Ok(format!("Executed {}", target))
+        Ok(ExecutionResult::Action(format!("Executed {}", target)))
     }
 }
 
@@ -87,7 +78,6 @@ fn parse_system_action(target: &str) -> Result<SystemAction, ExecutionError> {
 
 #[derive(Debug)]
 pub enum ExecutionError {
-    MissingTarget,
     MissingMapping(String),
     Windows(WindowsActionError),
     UnknownIntent,
@@ -95,10 +85,15 @@ pub enum ExecutionError {
     Io(std::io::Error),
 }
 
+#[derive(Debug)]
+pub enum ExecutionResult {
+    Action(String),
+    Answer(String),
+}
+
 impl std::fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingTarget => write!(f, "intent missing target"),
             Self::MissingMapping(key) => write!(f, "no mapping for key '{}'", key),
             Self::Windows(err) => write!(f, "windows action failed: {}", err),
             Self::UnknownIntent => write!(f, "intent classified as unknown"),
