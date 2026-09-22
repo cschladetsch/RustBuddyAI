@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page.title | default: site.title }} · {{ site.title }}</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a10; --bg-raised: #12121b; --border: #23232f;
+      --text: #e9eaf2; --text-dim: #8c8fa3;
+      --accent: #7c5cff; --accent-2: #22d3ee;
+      --accent-glow: rgba(124, 92, 255, 0.35); --code-bg: #0f0f17;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--text); margin: 0; line-height: 1.7;
+      -webkit-font-smoothing: antialiased; position: relative; min-height: 100vh;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: -2;
+      background:
+        radial-gradient(ellipse 900px 500px at 15% -10%, var(--accent-glow), transparent 60%),
+        radial-gradient(ellipse 800px 600px at 110% 10%, rgba(34, 211, 238, 0.18), transparent 55%),
+        var(--bg);
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; z-index: -1; opacity: 0.5;
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.035) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 20%, transparent 75%);
+    }
+    header.site {
+      border-bottom: 1px solid var(--border); position: sticky; top: 0;
+      background: rgba(10, 10, 16, 0.72); backdrop-filter: blur(10px); z-index: 10;
+    }
+    nav {
+      max-width: 880px; margin: 0 auto; padding: 1.1rem 1.5rem;
+      display: flex; align-items: center; gap: 1.75rem;
+    }
+    nav .brand {
+      font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 1.1rem;
+      color: var(--text); text-decoration: none; margin-right: auto;
+      letter-spacing: -0.01em; display: flex; align-items: center; gap: 0.5rem;
+    }
+    nav .brand::before {
+      content: ""; width: 9px; height: 9px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    nav a.link {
+      color: var(--text-dim); text-decoration: none; font-size: 0.9rem;
+      font-weight: 500; transition: color 0.15s ease;
+    }
+    nav a.link:hover { color: var(--accent-2); }
+    main { max-width: 880px; margin: 0 auto; padding: 4rem 1.5rem 5rem; }
+    h1, h2, h3, h4 {
+      font-family: "Space Grotesk", sans-serif; line-height: 1.3;
+      letter-spacing: -0.015em; font-weight: 700;
+    }
+    h1 {
+      font-size: 2.5rem; margin: 0 0 0.6rem;
+      background: linear-gradient(135deg, #ffffff 20%, var(--accent-2) 90%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent; display: inline-block;
+    }
+    h2 {
+      font-size: 1.35rem; margin: 3.25rem 0 1rem; padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--border); color: var(--text);
+    }
+    h2::before {
+      content: "//"; color: var(--accent); margin-right: 0.5rem;
+      font-family: "JetBrains Mono", monospace; font-weight: 500; opacity: 0.8;
+    }
+    h2:first-of-type { margin-top: 2.5rem; }
+    h3 { font-size: 1.05rem; margin: 1.75rem 0 0.6rem; color: var(--accent-2); }
+    p { color: var(--text); }
+    main > p:first-of-type { color: var(--text-dim); font-size: 1.1rem; max-width: 62ch; }
+    a { color: var(--accent-2); text-decoration-color: rgba(34, 211, 238, 0.4); }
+    a:hover { text-decoration-color: var(--accent-2); }
+    ul { padding-left: 1.3rem; }
+    li { margin: 0.4rem 0; }
+    li strong { color: var(--text); }
+    li::marker { color: var(--accent); }
+    code {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--code-bg); border: 1px solid var(--border); color: var(--accent-2);
+      padding: 0.1rem 0.4rem; border-radius: 5px; font-size: 0.85em;
+    }
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border);
+      padding: 1rem 1.1rem; overflow-x: auto; border-radius: 10px;
+    }
+    pre code { background: none; border: none; padding: 0; font-size: 0.85rem; color: var(--text); }
+    .mermaid-card {
+      position: relative; background: linear-gradient(180deg, var(--bg-raised), #0d0d15);
+      border: 1px solid var(--border); border-radius: 14px; padding: 1.75rem;
+      margin: 1.5rem 0 2rem; overflow-x: auto;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.02), 0 20px 40px -20px rgba(0,0,0,0.6);
+    }
+    .mermaid-card::before {
+      content: ""; position: absolute; inset: 0; border-radius: 14px; padding: 1px;
+      background: linear-gradient(135deg, var(--accent-glow), transparent 40%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+    }
+    .mermaid { display: flex; justify-content: center; position: relative; }
+    .mermaid svg { max-width: 100%; }
+    hr { display: none; }
+    footer {
+      max-width: 880px; margin: 0 auto; padding: 0 1.5rem 3rem;
+      color: var(--text-dim); font-size: 0.85rem; font-family: "JetBrains Mono", monospace;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--accent-2); }
+  </style>
+</head>
+<body>
+  <header class="site">
+    <nav>
+      <a class="brand" href="{{ '/' | relative_url }}">RustBuddyAI</a>
+      <a class="link" href="{{ '/' | relative_url }}">Overview</a>
+      <a class="link" href="{{ '/architecture' | relative_url }}">Architecture</a>
+      <a class="link" href="https://github.com/cschladetsch/RustBuddyAI">GitHub ↗</a>
+    </nav>
+  </header>
+  <main>
+    {{ content }}
+  </main>
+  <footer>&gt; a voice assistant that stays on your machine</footer>
+  <script>
+    document.querySelectorAll('pre code.language-mermaid').forEach(function (block) {
+      var pre = block.parentElement;
+      var card = document.createElement('div');
+      card.className = 'mermaid-card';
+      var div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = block.textContent;
+      card.appendChild(div);
+      pre.replaceWith(card);
+    });
+    mermaid.initialize({
+      startOnLoad: true, theme: 'dark',
+      themeVariables: {
+        darkMode: true, background: '#12121b', primaryColor: '#1c1c2a',
+        primaryTextColor: '#e9eaf2', primaryBorderColor: '#7c5cff',
+        lineColor: '#22d3ee', secondaryColor: '#12121b', tertiaryColor: '#0f0f17',
+        fontFamily: 'JetBrains Mono, monospace'
+      },
+      securityLevel: 'loose'
+    });
+  </script>
+</body>
+</html>

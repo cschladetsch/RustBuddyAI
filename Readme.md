@@ -1,5 +1,8 @@
 # Buddy
 
+📖 [Docs & diagrams](https://cschladetsch.github.io/RustBuddyAI/)
+
+
 A local, privacy-first voice assistant for Windows. Control your PC with natural language - open files, launch apps, manage volume, and execute system commands.
 
 **Core Principle:** Everything stays on your machine. No cloud. No telemetry. No paid APIs.
